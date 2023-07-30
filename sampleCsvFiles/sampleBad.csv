@@ -1,0 +1,16 @@
+Client,Symbol,Quantity
+client1,ABB,100
+client1,EFF,1900
+client2,EFF,300
+client3,ABB,700
+client1,CDD,400
+client3,CDD,600
+client4,ABB,150
+client4,EFF,100.0
+client1,ABB,1000
+client5,ABB,-100
+client5,EFF,-100.1
+client2,ABB,500
+client4,CDD,100.1
+client6,ABB,100000000000000000000000000000000000000000000000000000000
+client5,CDD,five hundred

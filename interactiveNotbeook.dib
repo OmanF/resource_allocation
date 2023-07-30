@@ -1,0 +1,156 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"csharp","items":[{"aliases":[],"name":"csharp"},{"aliases":[],"languageName":"fsharp","name":"fsharp"}]}}
+
+#!markdown
+
+This is an interactive, runnable, code for the `SourciesDistribution` exercise.  
+All the code is copy-pasted from its respective files, but in a "one file" format, no encapsulating modules and such.
+
+Code that does external data verification follows a `Fail fast` approach, i.e. failing on validation errors rather than handling them via either `Option` or `Result` types.  
+The idea is the data coming into the distribution service should have already been vetted, **at the very least** by the data generator service itself.  
+If the data is, for any reason, invalid, there is a problem with the generator service, and it makes sense to fix the issue at its root instead of handling it here and moving the responsibility, and the potenial for error, even further down the chain.
+
+#!fsharp
+
+#r "nuget:FSharp.Data"
+
+#!fsharp
+
+open System
+open FSharp.Data
+
+#!fsharp
+
+type Symbol =
+    | ABB
+    | CDD
+    | EFF
+    | GHH
+
+type Client =
+    | C1
+    | C2
+    | C3
+    | C4
+    | C5
+    | C6
+    | C7
+
+type Request = { Client: Client; Quantity: int }
+
+[<AutoOpen>]
+module Auxiliary =
+    let symbolTotalRequestSum (sourciesRequested: Map<Symbol, Request list>) =
+        sourciesRequested
+        |> Map.map (fun _ s -> List.sumBy (fun curRqst -> curRqst.Quantity) s)
+
+#!fsharp
+
+let verifyQuantity (globalUserInput: int) =
+    let validateNonNegative (intUserInput: int) =
+        if (intUserInput >= 0) then
+            intUserInput
+        else
+            raise
+            <| ArgumentException
+                $"Invalid user input, %i{intUserInput} is a negative value. Ignoring value for current accumulation, adding 0 instead."
+
+    let validateMultiple100 (nonNegUserInput: int) =
+        if (nonNegUserInput) % 100 = 0 then
+            nonNegUserInput
+        else
+            raise
+            <| ArgumentException
+                $"Invalid user input, %i{nonNegUserInput}, is not a \"clean\" multiple of 100. Ignoring value for current accumulation, adding 0 instead."
+
+    validateNonNegative globalUserInput |> validateMultiple100
+
+#!fsharp
+
+type RequestCsvProvider = CsvProvider<"./sampleCsvFiles/sample.csv", HasHeaders=true>
+
+let requestsMap = Map.empty<Symbol, Request list>
+
+let translateSymbol (sym: string) =
+    match sym.ToLower() with
+    | "abb" -> ABB
+    | "cdd" -> CDD
+    | "eff" -> EFF
+    | "ghh" -> GHH
+    | _ ->
+        raise
+        <| ArgumentException($"Unkwown symbol, %s{sym} was given. Please verify your data.")
+
+let translateClient (client: string) =
+    match client.ToLower() with
+    | "client1" -> C1
+    | "client2" -> C2
+    | "client3" -> C3
+    | "client4" -> C4
+    | "client5" -> C5
+    | "client6" -> C6
+    | "client7" -> C7
+    | _ ->
+        raise
+        <| ArgumentException($"Unknown client, %s{client} was given. Please verify your data.")
+
+let requestsOrder (csvFilePath: string) =
+    RequestCsvProvider.Load(csvFilePath).Rows
+    |> Seq.filter (fun row -> not ((row.Quantity |> verifyQuantity) = 0))
+    |> (Seq.groupBy (fun row -> (translateClient row.Client, translateSymbol row.Symbol))
+        >> Seq.map (fun (combo, rows) -> (combo, rows |> Seq.sumBy (fun row -> (row.Quantity |> verifyQuantity))))
+        >> Seq.fold
+            (fun (acc: Map<Symbol, Request list>) (combo, sum) ->
+                if (Map.containsKey (snd combo) acc) then
+                    Map.add (snd combo) (List.append acc[snd combo] [ { Client = (fst combo); Quantity = sum } ]) acc
+                else
+                    Map.add (snd combo) (List.append [] [ { Client = (fst combo); Quantity = sum } ]) acc)
+            requestsMap)
+
+#!fsharp
+
+let rnd = new Random()
+
+let approveSourcies (sourciesRequested: Map<Symbol, Request list>) =
+    sourciesRequested
+    |> symbolTotalRequestSum
+    |> Map.map (fun _ s ->
+        // With probability of 1-in-4, allocation for symbol might not cover the entire requested amount!
+        if rnd.NextDouble() >= 0.75 then
+            // Round allocation **down** to nearest multiple of 10
+            (((((float s * rnd.NextDouble()) / 10.0) |> ceil) * 10.0) |> Math.Round) |> int
+        else
+            s)
+
+#!fsharp
+
+let distributeSourcies (requestMap: Map<Symbol, Request list>) (approvedMap: Map<Symbol, int>) =
+    approvedMap
+    |> Map.iter (fun curSym curApproved ->
+        let requestedQuant = (symbolTotalRequestSum requestMap)[curSym]
+
+        match (curApproved, requestedQuant) with
+        | x, y when x > y ->
+            raise
+            <| ArgumentException
+                $"\nApproved quantity for symbol %A{curSym}, %i{curApproved}, is greater than demand, %i{requestedQuant}. There is an error in approval service. Aborting as data is considered useless."
+        | x, y when x = y ->
+            printfn $"\nApproved quantity for symbol %A{curSym} meets demand exactly.\nOptimal allocation follows:"
+
+            requestMap[curSym]
+            |> List.iter (fun curRqst ->
+                printfn $"Client: %A{curRqst.Client}, Quantity: %i{curRqst.Quantity}")
+        | x, y when x < y -> printfn $"\nApproved quantity for symbol %A{curSym}, %i{curApproved} is **less** than demand, %i{requestedQuant}.\nApproved resources will be dispensed in batches of 100, round-robin. Surplus will be dispensed to next in line.\nNeeds to implement this soon."
+        | _ ->
+            raise
+            <| ArgumentException "No idea how we got to this branch! Need to do some serious debugging.")
+
+#!fsharp
+
+let requests = requestsOrder("./sampleCsvFiles/sampleGood.csv")
+let approvals = requests |> approveSourcies
+
+#!fsharp
+
+distributeSourcies requests approvals
